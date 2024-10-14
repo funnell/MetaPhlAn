@@ -4,6 +4,7 @@ __version__ = '4.1.1'
 __date__ = '11 Mar 2024'
 
 import os
+import re
 import time
 import argparse as ap
 try:
@@ -60,19 +61,37 @@ def get_gtdb_profile(mpa_profile, gtdb_profile, database):
         with open(mpa_profile, 'r') as rf:
             unclassified = 0
             abundances = {x: dict() for x in tax_levels}
+            reads = {x: dict() for x in tax_levels}
             for line in rf:
                 if line.startswith('#mpa_'):
                     wf.write(line)
-                    wf.write('#clade_name\trelative_abundance\n')
+                    wf.write(
+                        '#clade_name\trelative_abundance\t'
+                        'estimated_number_of_reads_from_the_clade\n'
+                    )
                 elif line.startswith('UNCLASSIFIED'):
-                    unclassified = float(line.strip().split('\t')[2])
-                    wf.write('UNCLASSIFIED\t{}\n'.format(unclassified))
+                    line = line.strip().split('\t')
+                    wf.write(
+                        'UNCLASSIFIED\t{}\t{}\n'.format(
+                            float(line[2]), int(line[4])
+                        )
+                    )
                 elif 't__SGB' in line:
                     line = line.strip().split('\t')
-                    gtdb_tax = sgb2gtdb[line[0].split('|')[-1][3:]]
+                    sgb = line[0].split('|')[-1][3:]
+                    gtdb_tax = sgb2gtdb[sgb]
+                    if gtdb_tax[-4:] == ';s__':
+                        match = re.search(';g__(.+);s__', gtdb_tax)
+                        if match:
+                            genus = match.group(1)
+                            gtdb_tax += genus + ' ' + sgb
+                        else:
+                            gtdb_tax += sgb
                     if gtdb_tax not in abundances['s']:
                         abundances['s'][gtdb_tax] = 0
+                        reads['s'][gtdb_tax] = 0
                     abundances['s'][gtdb_tax] += float(line[2])
+                    reads['s'][gtdb_tax] += int(line[4])
         tax_levels.reverse()
         for tax_level in tax_levels[:-1]:
             for tax in abundances[tax_level]:
@@ -80,12 +99,20 @@ def get_gtdb_profile(mpa_profile, gtdb_profile, database):
                 new_level = tax_levels[tax_levels.index(tax_level)+1]
                 if new_tax not in abundances[new_level]:
                     abundances[new_level][new_tax] = 0
-                abundances[new_level][new_tax] += abundances[tax_level][tax]        
+                    reads[new_level][new_tax] = 0
+                abundances[new_level][new_tax] += abundances[tax_level][tax]
+                reads[new_level][new_tax] += reads[tax_level][tax]
         tax_levels.reverse()
         total4level = {x:sum([y for x,y in abundances[x].items()]) for x in tax_levels}
         for tax_level in tax_levels:
             for tax in abundances[tax_level]:
-                wf.write('{}\t{}\n'.format(tax, abundances[tax_level][tax] * 100 / total4level[tax_level]))
+                wf.write(
+                    '{}\t{}\t{}\n'.format(
+                        tax,
+                        abundances[tax_level][tax] * 100 / total4level[tax_level],
+                        reads[tax_level][tax]
+                    )
+                )
 
 
 def main():
